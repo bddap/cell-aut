@@ -74,7 +74,7 @@ impl TexturedQuad {
             )
             .unwrap(),
             indices: CpuAccessibleBuffer::<[u32]>::from_iter(
-                device.clone(),
+                device,
                 BufferUsage::index_buffer(),
                 false,
                 self.indices.into_iter(),

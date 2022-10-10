@@ -1,3 +1,4 @@
+mod ca_simulator;
 mod camera;
 mod gui;
 mod quad_pipeline;
@@ -5,25 +6,29 @@ mod render;
 mod utils;
 mod vertex;
 
-use std::sync::Arc;
-
 use crate::gui::user_interface;
 use bevy::{
     input::mouse::MouseWheel,
     prelude::*,
     window::{close_on_esc, WindowMode},
 };
-use bevy_vulkano::{
-    texture_from_file_bytes, BevyVulkanoWindows, VulkanoWinitConfig, VulkanoWinitPlugin,
-};
+use bevy_vulkano::{BevyVulkanoWindows, VulkanoWinitConfig, VulkanoWinitPlugin};
+use ca_simulator::CaSimulator;
 use camera::OrthographicCamera;
 use render::FillScreenRenderPass;
-use vulkano::{format::Format, image::ImageViewAbstract};
+use utils::{cursor_to_world, get_canvas_line, MousePos};
 
 pub const WIDTH: f32 = 512.0;
 pub const HEIGHT: f32 = 512.0;
-pub const CLEAR_COLOR: [f32; 4] = [0.0; 4];
+// pub const CLEAR_COLOR: [f32; 4] = [0.0; 4];
+pub const CLEAR_COLOR: [f32; 4] = [1.0; 4];
 pub const CAMERA_MOVE_SPEED: f32 = 200.0;
+pub const CANVAS_SIZE_X: u32 = 512;
+pub const CANVAS_SIZE_Y: u32 = 512;
+pub const LOCAL_SIZE_X: u32 = 32;
+pub const LOCAL_SIZE_Y: u32 = 32;
+pub const NUM_WORK_GROUPS_X: u32 = CANVAS_SIZE_X / LOCAL_SIZE_X;
+pub const NUM_WORK_GROUPS_Y: u32 = CANVAS_SIZE_Y / LOCAL_SIZE_Y;
 
 fn main() {
     App::new()
@@ -51,14 +56,14 @@ fn main() {
         .add_system(update_camera)
         .add_system(close_on_esc)
         .add_system(input_actions)
+        .add_system(update_mouse)
+        .add_system(draw_matter)
+        .add_system(simulate)
         // gui
         .add_system(user_interface)
         .add_system_to_stage(CoreStage::PostUpdate, render)
         .run();
 }
-
-/// Vulkano image to be passed as an input to an image sample in our quad pipeline
-struct TreeImage(Arc<dyn ImageViewAbstract + Send + Sync + 'static>);
 
 /// Creates our simulation and render pipelines
 fn setup(mut commands: Commands, vulkano_windows: NonSend<BevyVulkanoWindows>) {
@@ -71,28 +76,27 @@ fn setup(mut commands: Commands, vulkano_windows: NonSend<BevyVulkanoWindows>) {
     );
     commands.insert_resource(fill_screen);
 
-    // load the tree texture
-    let tree_image = texture_from_file_bytes(
-        primary_window_renderer.graphics_queue(),
-        include_bytes!("../assets/dalltree.png"),
-        Format::R8G8B8A8_SRGB, // required to be srg
-    )
-    .unwrap();
-    commands.insert_resource(TreeImage(tree_image));
-
     // Create simple orthographic camera
     let camera = OrthographicCamera::default();
     commands.insert_resource(camera);
+
+    let simulator = CaSimulator::new(primary_window_renderer.compute_queue());
+    commands.insert_resource(simulator);
+
+    commands.insert_resource(PreviousMousePos(None));
+    commands.insert_resource(CurrentMousePos(None));
+
+    commands.insert_resource(DynamicSettings::default());
 }
 
 /// Render the simulation
 fn render(
     mut vulkano_windows: NonSendMut<BevyVulkanoWindows>,
     mut fill_screen: ResMut<FillScreenRenderPass>,
-    tree_image: Res<TreeImage>,
+    simulator: Res<CaSimulator>,
     camera: Res<OrthographicCamera>,
 ) {
-    let tree_image = tree_image.0.clone();
+    let canvas_image = simulator.color_image();
 
     // Access our window renderer and gui
     let (window_renderer, gui) = vulkano_windows.get_primary_window_renderer_mut().unwrap();
@@ -108,10 +112,12 @@ fn render(
     let final_image = window_renderer.swapchain_image_view();
     let after_images = fill_screen.draw(
         before,
-        camera.clone(),
-        tree_image,
+        *camera,
+        canvas_image,
         final_image.clone(),
         CLEAR_COLOR,
+        false,
+        true,
     );
 
     // Draw GUI using egui_winit_window's GUI draw pipeline
@@ -155,6 +161,65 @@ fn input_actions(
             camera.scale *= 1.05;
         } else {
             camera.scale *= 1.0 / 1.05;
+        }
+    }
+}
+
+/// Mouse position from last frame
+#[derive(Debug, Copy, Clone)]
+pub struct PreviousMousePos(pub Option<MousePos>);
+
+/// Mouse position now
+#[derive(Debug, Copy, Clone)]
+pub struct CurrentMousePos(pub Option<MousePos>);
+
+/// Update mouse position
+fn update_mouse(
+    windows: Res<Windows>,
+    mut prev: ResMut<PreviousMousePos>,
+    mut current: ResMut<CurrentMousePos>,
+    camera: Res<OrthographicCamera>,
+) {
+    prev.0 = current.0;
+    let primary = windows.get_primary().unwrap();
+    if primary.cursor_position().is_some() {
+        current.0 = Some(MousePos {
+            world: cursor_to_world(primary, camera.pos, camera.scale),
+        });
+    }
+}
+
+fn draw_matter(
+    mut simulator: ResMut<CaSimulator>,
+    prev: Res<PreviousMousePos>,
+    current: Res<CurrentMousePos>,
+    mouse_button_input: Res<Input<MouseButton>>,
+    settings: Res<DynamicSettings>,
+) {
+    if let Some(current) = current.0 {
+        if mouse_button_input.pressed(MouseButton::Left) {
+            let line = get_canvas_line(prev.0, current);
+            // Draw red
+            simulator.draw_matter(&line, settings.brush_radius, settings.draw_matter);
+        }
+    }
+}
+
+/// Step simulation
+fn simulate(mut sim_pipeline: ResMut<CaSimulator>) {
+    sim_pipeline.step();
+}
+
+pub struct DynamicSettings {
+    pub brush_radius: f32,
+    pub draw_matter: u32,
+}
+
+impl Default for DynamicSettings {
+    fn default() -> Self {
+        Self {
+            brush_radius: 4.0,
+            draw_matter: 0xff0000ff,
         }
     }
 }

@@ -57,6 +57,8 @@ impl FillScreenRenderPass {
         image: Arc<dyn ImageViewAbstract>,
         target: SwapchainImageView,
         clear_color: [f32; 4],
+        flip_x: bool,
+        flip_y: bool,
     ) -> Box<dyn GpuFuture>
     where
         F: GpuFuture + 'static,
@@ -91,9 +93,9 @@ impl FillScreenRenderPass {
         // Draw here
         // ...
         //
-        let cb = self
-            .quad_pipeline
-            .draw(target_image.width_height(), camera, image);
+        let cb =
+            self.quad_pipeline
+                .draw(target_image.width_height(), camera, image, flip_x, flip_y);
         command_buffer_builder.execute_commands(cb).unwrap();
         command_buffer_builder.end_render_pass().unwrap();
         let command_buffer = command_buffer_builder.build().unwrap();

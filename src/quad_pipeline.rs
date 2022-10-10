@@ -64,6 +64,8 @@ impl DrawQuadPipeline {
         viewport_dimensions: [u32; 2],
         camera: OrthographicCamera,
         image: Arc<dyn ImageViewAbstract>,
+        flip_x: bool,
+        flip_y: bool,
     ) -> SecondaryAutoCommandBuffer {
         let mut builder = AutoCommandBufferBuilder::secondary(
             self.gfx_queue.device().clone(),
@@ -87,7 +89,10 @@ impl DrawQuadPipeline {
         let push_constants = vs::ty::PushConstants {
             world_to_screen: camera.world_to_screen().to_cols_array_2d(),
             // Scale transforms our 1.0 sized quad to actual pixel size in screen space
-            scale: [dims.width() as f32, dims.height() as f32],
+            scale: [
+                dims.width() as f32 * if flip_x { -1.0 } else { 1.0 },
+                dims.height() as f32 * if flip_y { -1.0 } else { 1.0 },
+            ],
         };
 
         builder
