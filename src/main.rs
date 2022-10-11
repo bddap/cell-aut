@@ -9,6 +9,7 @@ mod vertex;
 
 #[cfg(test)]
 mod tests;
+mod timer;
 
 use crate::gui::user_interface;
 use bevy::{
@@ -22,6 +23,7 @@ use ca_simulator::CaSimulator;
 use camera::OrthographicCamera;
 use matter::MatterId;
 use render::FillScreenRenderPass;
+use timer::{PerformanceTimer, RenderTimer, SimTimer};
 use utils::{cursor_to_world, get_canvas_line, MousePos};
 
 pub const WIDTH: f32 = 512.0;
@@ -29,8 +31,8 @@ pub const HEIGHT: f32 = 512.0;
 // pub const CLEAR_COLOR: [f32; 4] = [0.0; 4];
 pub const CLEAR_COLOR: [f32; 4] = [1.0; 4];
 pub const CAMERA_MOVE_SPEED: f32 = 200.0;
-pub const CANVAS_SIZE_X: u32 = 512;
-pub const CANVAS_SIZE_Y: u32 = 512;
+pub const CANVAS_SIZE_X: u32 = 512 * 2;
+pub const CANVAS_SIZE_Y: u32 = 512 * 2;
 pub const LOCAL_SIZE_X: u32 = 32;
 pub const LOCAL_SIZE_Y: u32 = 32;
 pub const NUM_WORK_GROUPS_X: u32 = CANVAS_SIZE_X / LOCAL_SIZE_X;
@@ -100,6 +102,10 @@ fn setup(mut commands: Commands, vulkano_windows: NonSend<BevyVulkanoWindows>) {
     commands.insert_resource(CurrentMousePos(None));
 
     commands.insert_resource(DynamicSettings::default());
+
+    // Simulation performance timer
+    commands.insert_resource(SimTimer(PerformanceTimer::new()));
+    commands.insert_resource(RenderTimer(PerformanceTimer::new()));
 }
 
 /// Render the simulation
@@ -108,7 +114,9 @@ fn render(
     mut fill_screen: ResMut<FillScreenRenderPass>,
     simulator: Res<CaSimulator>,
     camera: Res<OrthographicCamera>,
+    mut render_timer: ResMut<RenderTimer>,
 ) {
+    render_timer.0.start();
     let canvas_image = simulator.color_image();
 
     // Access our window renderer and gui
@@ -138,6 +146,7 @@ fn render(
 
     // Finish Frame
     window_renderer.present(after_gui, true);
+    render_timer.0.time_it();
 }
 
 /// Update camera (if window is resized)
@@ -224,14 +233,21 @@ fn draw_matter(
 }
 
 /// Step simulation
-fn simulate(mut sim_pipeline: ResMut<CaSimulator>, settings: Res<DynamicSettings>) {
-    sim_pipeline.step(2, settings.is_paused);
+fn simulate(
+    mut sim_pipeline: ResMut<CaSimulator>,
+    settings: Res<DynamicSettings>,
+    mut sim_timer: ResMut<SimTimer>,
+) {
+    sim_timer.0.start();
+    sim_pipeline.step(settings.move_steps, settings.is_paused);
+    sim_timer.0.time_it();
 }
 
 pub struct DynamicSettings {
     pub brush_radius: f32,
     pub draw_matter: MatterId,
     pub is_paused: bool,
+    pub move_steps: u32,
 }
 
 impl Default for DynamicSettings {
@@ -240,6 +256,7 @@ impl Default for DynamicSettings {
             brush_radius: 4.0,
             draw_matter: MatterId::Sand,
             is_paused: false,
+            move_steps: 1,
         }
     }
 }

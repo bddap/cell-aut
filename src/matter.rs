@@ -35,6 +35,27 @@ impl MatterId {
         };
         u32_rgba_to_u8_rgba(color)
     }
+
+    fn gen_variate_color_rgba_u8(&self) -> [u8; 4] {
+        let p: f32 = rand::random();
+        let color = self.color_rgba_f32();
+        let variation = -0.1 + 0.2 * p;
+        let r = ((color[0] + variation).clamp(0.0, 1.0) * 255.0) as u8;
+        let g = ((color[1] + variation).clamp(0.0, 1.0) * 255.0) as u8;
+        let b = ((color[2] + variation).clamp(0.0, 1.0) * 255.0) as u8;
+        let a = 255;
+        [r, g, b, a]
+    }
+
+    fn color_rgba_f32(&self) -> [f32; 4] {
+        let rgba = self.color_rgba_u8();
+        [
+            rgba[0] as f32 / 255.0,
+            rgba[1] as f32 / 255.0,
+            rgba[2] as f32 / 255.0,
+            rgba[3] as f32 / 255.0,
+        ]
+    }
 }
 
 /// Matter data where first 3 bytes are saved for color and last 4th byte is saved for matter identifier
@@ -44,9 +65,13 @@ pub struct MatterWithColor {
 }
 
 impl MatterWithColor {
-    /// Creates a new matter with color from matter identifier giving it a slightly randomized color
+    /// Creates a new matter with color from matter id giving it a slightly randomized color
     pub fn new(matter_id: MatterId) -> MatterWithColor {
-        let color = matter_id.color_rgba_u8();
+        let color = if matter_id != MatterId::Empty {
+            matter_id.gen_variate_color_rgba_u8()
+        } else {
+            matter_id.color_rgba_u8()
+        };
         MatterWithColor {
             value: u8_rgba_to_u32_rgba(color[0], color[1], color[2], matter_id as u8),
         }

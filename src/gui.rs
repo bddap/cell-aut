@@ -12,8 +12,9 @@ use crate::{
     ca_simulator::CaSimulator,
     camera::OrthographicCamera,
     matter::MatterId,
+    timer::{RenderTimer, SimTimer},
     utils::{cursor_to_world, MousePos},
-    DynamicSettings,
+    DynamicSettings, CANVAS_SIZE_X, CANVAS_SIZE_Y,
 };
 
 /// Give our text a custom size
@@ -29,6 +30,8 @@ pub fn user_interface(
     windows: Res<Windows>,
     camera: Res<OrthographicCamera>,
     simulator: Res<CaSimulator>,
+    sim_timer: Res<SimTimer>,
+    render_timer: Res<RenderTimer>,
 ) {
     let simulator: &CaSimulator = &simulator;
 
@@ -47,6 +50,7 @@ pub fn user_interface(
 
             ui.heading("Settings");
             ui.add(egui::Slider::new(&mut settings.brush_radius, 0.5..=30.0).text("Brush Radius"));
+            ui.add(egui::Slider::new(&mut settings.move_steps, 1..=5).text("Move Steps"));
 
             egui::ComboBox::from_label("Matter")
                 .selected_text(format!("{:?}", settings.draw_matter))
@@ -76,5 +80,36 @@ pub fn user_interface(
                     },
                 );
             }
+
+            // Add this too for minor utility
+            sized_text(
+                ui,
+                format!("Grid size: ({},{})", CANVAS_SIZE_X, CANVAS_SIZE_Y),
+                size,
+            );
+            sized_text(
+                ui,
+                format!(
+                    "Sim Time: {:.2} ms, {}",
+                    sim_timer.0.time_average_ms(),
+                    if settings.is_paused {
+                        "Paused"
+                    } else {
+                        "Playing"
+                    }
+                ),
+                size,
+            );
+            sized_text(
+                ui,
+                format!("Render Time: {:.2} ms", render_timer.0.time_average_ms()),
+                size,
+            );
+
+            sized_text(
+                ui,
+                format!("Dispatches per step {}", simulator.dispatches_per_step),
+                size,
+            );
         });
 }

@@ -48,6 +48,7 @@ pub struct CaSimulator {
     image: DeviceImageView,
     sim_step: u32,
     move_step: u32,
+    pub dispatches_per_step: u32,
 }
 
 impl CaSimulator {
@@ -123,6 +124,7 @@ impl CaSimulator {
             fall_pipeline,
             sim_step: 0,
             move_step: 0,
+            dispatches_per_step: 0,
         }
     }
 
@@ -173,6 +175,7 @@ impl CaSimulator {
 
     /// Step simulation
     pub fn step(&mut self, move_steps: u32, is_paused: bool) {
+        self.dispatches_per_step = 0;
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self.compute_queue.device().clone(),
             self.compute_queue.family(),
@@ -218,6 +221,7 @@ impl CaSimulator {
         pipeline: Arc<ComputePipeline>,
         swap: bool,
     ) {
+        self.dispatches_per_step += 1;
         let push_constants = slide_down_empty_cs::ty::PushConstants {
             sim_step: self.sim_step as u32,
             move_step: self.move_step as u32,

@@ -12,6 +12,7 @@ vulkano-util = "0.30.0"
 line_drawing = "1.0.0"
 strum_macros = "0.24.0"
 strum = "0.24.0"
+rand = "0.8.5"
 
 [dependencies.bevy]
 version = "0.8.0"
