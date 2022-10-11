@@ -159,3 +159,17 @@ pub fn get_canvas_line(prev: Option<MousePos>, current: MousePos) -> Vec<IVec2> 
     .map(|pos| IVec2::new(pos.0, pos.1))
     .collect::<Vec<IVec2>>()
 }
+
+/// Converts u32 color to array of 4 u8
+pub fn u32_rgba_to_u8_rgba(num: u32) -> [u8; 4] {
+    let a = num & 255;
+    let b = (num >> 8) & 255;
+    let g = (num >> 16) & 255;
+    let r = (num >> 24) & 255;
+    [r as u8, g as u8, b as u8, a as u8]
+}
+
+/// Converts array of 4 u8 colors to u32
+pub fn u8_rgba_to_u32_rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | (a as u32 & 255)
+}

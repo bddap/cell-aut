@@ -17,6 +17,7 @@ use vulkano::{
 use vulkano_util::renderer::DeviceImageView;
 
 use crate::{
+    matter::{MatterId, MatterWithColor},
     utils::{create_compute_pipeline, storage_buffer_desc, storage_image_desc},
     CANVAS_SIZE_X, CANVAS_SIZE_Y, LOCAL_SIZE_X, LOCAL_SIZE_Y, NUM_WORK_GROUPS_X, NUM_WORK_GROUPS_Y,
 };
@@ -40,9 +41,13 @@ fn empty_grid(
 pub struct CaSimulator {
     compute_queue: Arc<Queue>,
     color_pipeline: Arc<ComputePipeline>,
+    fall_pipeline: Arc<ComputePipeline>,
+    slide_pipeline: Arc<ComputePipeline>,
     matter_in: Arc<CpuAccessibleBuffer<[u32]>>,
     matter_out: Arc<CpuAccessibleBuffer<[u32]>>,
     image: DeviceImageView,
+    sim_step: u32,
+    move_step: u32,
 }
 
 impl CaSimulator {
@@ -64,7 +69,9 @@ impl CaSimulator {
         };
 
         // Create pipelines
-        let color_pipeline = {
+        let (fall_pipeline, slide_pipeline, color_pipeline) = {
+            let fall_shader = fall_empty_cs::load(compute_queue.device().clone()).unwrap();
+            let slide_shader = slide_down_empty_cs::load(compute_queue.device().clone()).unwrap();
             let color_shader = color_cs::load(compute_queue.device().clone()).unwrap();
             // This must match the shader and inputs in dispatch
             let descriptor_layout = [
@@ -72,11 +79,25 @@ impl CaSimulator {
                 (1, storage_buffer_desc()),
                 (2, storage_image_desc()),
             ];
-            create_compute_pipeline(
-                compute_queue.clone(),
-                color_shader.entry_point("main").unwrap(),
-                descriptor_layout.to_vec(),
-                &spec_const,
+            (
+                create_compute_pipeline(
+                    compute_queue.clone(),
+                    fall_shader.entry_point("main").unwrap(),
+                    descriptor_layout.to_vec(),
+                    &spec_const,
+                ),
+                create_compute_pipeline(
+                    compute_queue.clone(),
+                    slide_shader.entry_point("main").unwrap(),
+                    descriptor_layout.to_vec(),
+                    &spec_const,
+                ),
+                create_compute_pipeline(
+                    compute_queue.clone(),
+                    color_shader.entry_point("main").unwrap(),
+                    descriptor_layout.to_vec(),
+                    &spec_const,
+                ),
             )
         };
         // Create color image
@@ -95,9 +116,13 @@ impl CaSimulator {
         CaSimulator {
             compute_queue,
             color_pipeline,
+            slide_pipeline,
             matter_in,
             matter_out,
             image,
+            fall_pipeline,
+            sim_step: 0,
+            move_step: 0,
         }
     }
 
@@ -117,7 +142,7 @@ impl CaSimulator {
     }
 
     /// Draw matter line with given radius
-    pub fn draw_matter(&mut self, line: &[IVec2], radius: f32, matter: u32) {
+    pub fn draw_matter(&mut self, line: &[IVec2], radius: f32, matter: MatterId) {
         let mut matter_in = self.matter_in.write().unwrap();
         for &pos in line.iter() {
             if !self.is_inside(pos) {
@@ -137,7 +162,8 @@ impl CaSimulator {
                     {
                         if self.is_inside([x, y].into()) {
                             // Draw
-                            matter_in[self.index([x, y].into())] = matter;
+                            matter_in[self.index([x, y].into())] =
+                                MatterWithColor::new(matter).value;
                         }
                     }
                 }
@@ -146,7 +172,7 @@ impl CaSimulator {
     }
 
     /// Step simulation
-    pub fn step(&mut self) {
+    pub fn step(&mut self, move_steps: u32, is_paused: bool) {
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self.compute_queue.device().clone(),
             self.compute_queue.family(),
@@ -154,13 +180,35 @@ impl CaSimulator {
         )
         .unwrap();
 
-        // Finally color the image
-        self.dispatch(&mut command_buffer_builder, self.color_pipeline.clone());
+        if !is_paused {
+            for _ in 0..move_steps {
+                self.step_movement(&mut command_buffer_builder, self.fall_pipeline.clone());
+                self.step_movement(&mut command_buffer_builder, self.slide_pipeline.clone());
+            }
+        }
+
+        self.dispatch(
+            &mut command_buffer_builder,
+            self.color_pipeline.clone(),
+            false,
+        );
 
         // Finish
         let command_buffer = command_buffer_builder.build().unwrap();
         let finished = command_buffer.execute(self.compute_queue.clone()).unwrap();
         let _fut = finished.then_signal_fence_and_flush().unwrap();
+
+        self.sim_step += 1;
+    }
+
+    /// Step a movement pipeline. move_step affects the order of sliding direction
+    fn step_movement(
+        &mut self,
+        builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+        pipeline: Arc<ComputePipeline>,
+    ) {
+        self.dispatch(builder, pipeline.clone(), true);
+        self.move_step += 1;
     }
 
     /// Append a pipeline dispatch to our command buffer
@@ -168,7 +216,12 @@ impl CaSimulator {
         &mut self,
         builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
         pipeline: Arc<ComputePipeline>,
+        swap: bool,
     ) {
+        let push_constants = slide_down_empty_cs::ty::PushConstants {
+            sim_step: self.sim_step as u32,
+            move_step: self.move_step as u32,
+        };
         let pipeline_layout = pipeline.layout();
         let desc_layout = pipeline_layout.set_layouts().get(0).unwrap();
         let set = PersistentDescriptorSet::new(
@@ -183,8 +236,23 @@ impl CaSimulator {
         builder
             .bind_pipeline_compute(pipeline.clone())
             .bind_descriptor_sets(PipelineBindPoint::Compute, pipeline_layout.clone(), 0, set)
+            .push_constants(pipeline_layout.clone(), 0, push_constants)
             .dispatch([NUM_WORK_GROUPS_X, NUM_WORK_GROUPS_Y, 1])
             .unwrap();
+        if swap {
+            std::mem::swap(&mut self.matter_in, &mut self.matter_out);
+        }
+    }
+
+    /// Query matter at pos
+    pub fn query_matter(&self, pos: IVec2) -> Option<MatterId> {
+        if self.is_inside(pos) {
+            let matter_in = self.matter_in.read().unwrap();
+            let index = self.index(pos);
+            Some(MatterWithColor::from(matter_in[index]).matter_id())
+        } else {
+            None
+        }
     }
 }
 
@@ -192,5 +260,19 @@ mod color_cs {
     vulkano_shaders::shader! {
         ty: "compute",
         path: "compute_shaders/color.glsl"
+    }
+}
+
+mod fall_empty_cs {
+    vulkano_shaders::shader! {
+        ty: "compute",
+        path: "compute_shaders/fall_empty.glsl"
+    }
+}
+
+mod slide_down_empty_cs {
+    vulkano_shaders::shader! {
+        ty: "compute",
+        path: "compute_shaders/slide_down_empty.glsl"
     }
 }

@@ -1,20 +1,26 @@
 mod ca_simulator;
 mod camera;
 mod gui;
+mod matter;
 mod quad_pipeline;
 mod render;
 mod utils;
 mod vertex;
 
+#[cfg(test)]
+mod tests;
+
 use crate::gui::user_interface;
 use bevy::{
     input::mouse::MouseWheel,
     prelude::*,
+    time::FixedTimestep,
     window::{close_on_esc, WindowMode},
 };
 use bevy_vulkano::{BevyVulkanoWindows, VulkanoWinitConfig, VulkanoWinitPlugin};
 use ca_simulator::CaSimulator;
 use camera::OrthographicCamera;
+use matter::MatterId;
 use render::FillScreenRenderPass;
 use utils::{cursor_to_world, get_canvas_line, MousePos};
 
@@ -29,6 +35,8 @@ pub const LOCAL_SIZE_X: u32 = 32;
 pub const LOCAL_SIZE_Y: u32 = 32;
 pub const NUM_WORK_GROUPS_X: u32 = CANVAS_SIZE_X / LOCAL_SIZE_X;
 pub const NUM_WORK_GROUPS_Y: u32 = CANVAS_SIZE_Y / LOCAL_SIZE_Y;
+pub const EMPTY_COLOR: u32 = 0x0;
+pub const SIM_FPS: f64 = 60.0;
 
 fn main() {
     App::new()
@@ -58,7 +66,12 @@ fn main() {
         .add_system(input_actions)
         .add_system(update_mouse)
         .add_system(draw_matter)
-        .add_system(simulate)
+        .add_system_set_to_stage(
+            CoreStage::Update,
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::steps_per_second(SIM_FPS))
+                .with_system(simulate),
+        )
         // gui
         .add_system(user_interface)
         .add_system_to_stage(CoreStage::PostUpdate, render)
@@ -139,6 +152,7 @@ fn input_actions(
     mut camera: ResMut<OrthographicCamera>,
     keyboard_input: Res<Input<KeyCode>>,
     mut mouse_input_events: EventReader<MouseWheel>,
+    mut settings: ResMut<DynamicSettings>,
 ) {
     // Move camera with arrows and WASD
     let up = keyboard_input.pressed(KeyCode::W) || keyboard_input.pressed(KeyCode::Up);
@@ -162,6 +176,10 @@ fn input_actions(
         } else {
             camera.scale *= 1.0 / 1.05;
         }
+    }
+
+    if keyboard_input.just_pressed(KeyCode::Space) {
+        settings.is_paused = !settings.is_paused;
     }
 }
 
@@ -206,20 +224,22 @@ fn draw_matter(
 }
 
 /// Step simulation
-fn simulate(mut sim_pipeline: ResMut<CaSimulator>) {
-    sim_pipeline.step();
+fn simulate(mut sim_pipeline: ResMut<CaSimulator>, settings: Res<DynamicSettings>) {
+    sim_pipeline.step(2, settings.is_paused);
 }
 
 pub struct DynamicSettings {
     pub brush_radius: f32,
-    pub draw_matter: u32,
+    pub draw_matter: MatterId,
+    pub is_paused: bool,
 }
 
 impl Default for DynamicSettings {
     fn default() -> Self {
         Self {
             brush_radius: 4.0,
-            draw_matter: 0xff0000ff,
+            draw_matter: MatterId::Sand,
+            is_paused: false,
         }
     }
 }

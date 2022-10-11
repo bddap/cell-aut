@@ -6,8 +6,15 @@ use bevy_vulkano::{
     egui_winit_vulkano::{egui, egui::Ui},
     BevyVulkanoWindows,
 };
+use strum::IntoEnumIterator;
 
-use crate::DynamicSettings;
+use crate::{
+    ca_simulator::CaSimulator,
+    camera::OrthographicCamera,
+    matter::MatterId,
+    utils::{cursor_to_world, MousePos},
+    DynamicSettings,
+};
 
 /// Give our text a custom size
 fn sized_text(ui: &mut Ui, text: impl Into<String>, size: f32) {
@@ -19,7 +26,12 @@ pub fn user_interface(
     vulkano_windows: NonSend<BevyVulkanoWindows>,
     diagnostics: Res<Diagnostics>,
     mut settings: ResMut<DynamicSettings>,
+    windows: Res<Windows>,
+    camera: Res<OrthographicCamera>,
+    simulator: Res<CaSimulator>,
 ) {
+    let simulator: &CaSimulator = &simulator;
+
     let (_, gui) = vulkano_windows.get_primary_window_renderer().unwrap();
     let ctx = gui.context();
     egui::Area::new("fps")
@@ -35,5 +47,34 @@ pub fn user_interface(
 
             ui.heading("Settings");
             ui.add(egui::Slider::new(&mut settings.brush_radius, 0.5..=30.0).text("Brush Radius"));
+
+            egui::ComboBox::from_label("Matter")
+                .selected_text(format!("{:?}", settings.draw_matter))
+                .show_ui(ui, |ui| {
+                    for matter in MatterId::iter() {
+                        ui.selectable_value(
+                            &mut settings.draw_matter,
+                            matter,
+                            format!("{:?}", matter),
+                        );
+                    }
+                });
+
+            let primary = windows.get_primary().unwrap();
+            if primary.cursor_position().is_some() {
+                let world_pos = cursor_to_world(primary, camera.pos, camera.scale);
+                let sim_pos = MousePos::new(world_pos).canvas_pos();
+                egui::containers::show_tooltip_at_pointer(
+                    &ctx,
+                    egui::Id::new("Hover tooltip"),
+                    |ui| {
+                        ui.label(format!("World: [{:.2}, {:.2}]", world_pos.x, world_pos.y));
+                        ui.label(format!("Sim: [{:.2}, {:.2}]", sim_pos.x, sim_pos.y));
+                        if let Some(matter) = simulator.query_matter(sim_pos.as_ivec2()) {
+                            ui.label(format!("Matter: {:?}", matter));
+                        }
+                    },
+                );
+            }
         });
 }
